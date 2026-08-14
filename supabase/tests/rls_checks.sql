@@ -345,3 +345,209 @@ begin
   end if;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- 16. IMMUTABLE MESSAGES (Part 10, migrations 012-013). Messages/attachments must
+--     be permanently immutable: no UPDATE/DELETE table privilege for any
+--     client role (in addition to the policy-level checks in 7 and 10), so a
+--     row can never be mutated or deleted even if a policy ever regressed.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if has_table_privilege('authenticated', 'public.messages', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.messages', 'DELETE')
+     or has_table_privilege('anon', 'public.messages', 'UPDATE')
+     or has_table_privilege('anon', 'public.messages', 'DELETE')
+     or has_table_privilege('authenticated', 'public.attachments', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.attachments', 'DELETE')
+     or has_table_privilege('anon', 'public.attachments', 'UPDATE')
+     or has_table_privilege('anon', 'public.attachments', 'DELETE')
+  then
+    raise exception 'messages/attachments must be immutable (no UPDATE/DELETE grants)';
+  end if;
+end;
+$$;
+
+-- Executable denial: even `where false` is rejected at the table level.
+set role authenticated;
+do $$
+begin
+  update public.messages set status = 'read' where false;
+  raise exception 'authenticated could UPDATE messages';
+exception
+  when insufficient_privilege then null;
+end;
+$$;
+do $$
+begin
+  delete from public.messages where false;
+  raise exception 'authenticated could DELETE messages';
+exception
+  when insufficient_privilege then null;
+end;
+$$;
+do $$
+begin
+  update public.attachments set mime_type = 'image/png' where false;
+  raise exception 'authenticated could UPDATE attachments';
+exception
+  when insufficient_privilege then null;
+end;
+$$;
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- 17. room_events (Part 10, migrations 012-013): append-only lifecycle metadata.
+--     Only a participant SELECT policy exists; the leave_room RPC is the only
+--     writer and authenticated holds SELECT only.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies p
+    where p.schemaname = 'public'
+      and p.tablename = 'room_events'
+      and p.policyname = 'room_events_select_participant'
+      and p.cmd = 'SELECT'
+  ) then
+    raise exception 'missing room_events participant SELECT policy';
+  end if;
+  if exists (
+    select 1 from pg_policies p
+    where p.schemaname = 'public'
+      and p.tablename = 'room_events'
+      and p.cmd in ('INSERT', 'UPDATE', 'DELETE')
+  ) then
+    raise exception 'room_events must be append-only via leave_room';
+  end if;
+  if not (
+    has_table_privilege('authenticated', 'public.room_events', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.room_events', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.room_events', 'UPDATE')
+    and not has_table_privilege('authenticated', 'public.room_events', 'DELETE')
+  ) then
+    raise exception 'authenticated must hold SELECT-only on room_events';
+  end if;
+end;
+$$;
+
+-- Executable denial: a client cannot write an event directly.
+set role authenticated;
+do $$
+begin
+  insert into public.room_events (room_id, user_id, display_name)
+  values (gen_random_uuid(), gen_random_uuid(), 'spoof');
+  raise exception 'authenticated could INSERT into room_events';
+exception
+  when insufficient_privilege then null;
+end;
+$$;
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- 18. leave_room (Part 10, migrations 012-013): executable by authenticated only,
+--     never by anon, and it is the ONLY way to close a room.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if not has_function_privilege('authenticated', 'public.leave_room(uuid)', 'EXECUTE') then
+    raise exception 'leave_room must be executable by authenticated';
+  end if;
+  if has_function_privilege('anon', 'public.leave_room(uuid)', 'EXECUTE') then
+    raise exception 'leave_room must not be executable by anon';
+  end if;
+end;
+$$;
+
+set role anon;
+do $$
+begin
+  perform public.leave_room(gen_random_uuid());
+  raise exception 'anon could call leave_room';
+exception
+  when insufficient_privilege then null;
+end;
+$$;
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- 19. Closed rooms (Part 10, migrations 012-013): every participant write/read
+--     policy for messages, attachments and room_keys, plus the storage
+--     policies, must gate on `status <> 'closed'`, so the instant a room is
+--     left it is inert for every participant. (The receipts RPCs and
+--     touch_presence also raise room_closed; join_room raises it too — see
+--     the manual checks below.)
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  r record;
+  v_ok boolean := true;
+begin
+  for r in
+    select p.tablename, p.policyname,
+           p.qual,
+           p.with_check as wc
+    from pg_policies p
+    where p.schemaname = 'public'
+      and p.policyname in (
+        'messages_insert_participant', 'messages_select_participant',
+        'attachments_insert_participant', 'attachments_select_participant',
+        'room_keys_insert_own', 'room_keys_update_own'
+      )
+  loop
+    if coalesce(r.qual, '') not ilike '%closed%'
+       and coalesce(r.wc, '') not ilike '%closed%' then
+      v_ok := false;
+    end if;
+  end loop;
+  if not v_ok then
+    raise exception 'a participant read/write policy does not gate on status <> closed';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  r record;
+  v_ok boolean := true;
+begin
+  for r in
+    select p.policyname,
+           p.qual,
+           p.with_check as wc
+    from pg_policies p
+    where p.schemaname = 'storage'
+      and p.policyname in ('attachments_read_participant', 'attachments_insert_participant')
+  loop
+    if coalesce(r.qual, '') not ilike '%closed%'
+       and coalesce(r.wc, '') not ilike '%closed%' then
+      v_ok := false;
+    end if;
+  end loop;
+  if not v_ok then
+    raise exception 'a storage policy does not gate on status <> closed';
+  end if;
+end;
+$$;
+
+-- Manual checks (Part 10). Run as an authenticated participant (the owner),
+-- with '<room_id>' being a live room's id:
+--
+--   -- leaving destroys the room atomically:
+--   select public.leave_room('<room_id>');
+--   select status from public.rooms where id = '<room_id>';               -- 'closed'
+--   select count(*) from public.room_participants where room_id = '<room_id>'; -- 1 (the leaver's row is gone)
+--   select count(*) from public.messages where room_id = '<room_id>';     -- 0
+--   select count(*) from public.room_keys where room_id = '<room_id>';    -- 0
+--   select display_name from public.room_events where room_id = '<room_id>'; -- the leaver's snapshot
+--   -- second leave attempt (same user) raises 'room_closed' (membership gone):
+--   select public.leave_room('<room_id>');                                -- error 'room_closed'
+--
+--   -- a closed room can never be reused, even by a former member:
+--   select public.join_room('<code of the closed room>');                 -- error 'room_closed'
+--   -- and the remaining participant's views are inert immediately:
+--   --   select count(*) from public.messages where room_id = '<room_id>';    -- 0
+--   --   select count(*) from storage.objects where bucket_id = 'encrypted-attachments'
+--   --        and name like '<room_id>/%';                                   -- 0 after blob purge
+--   --   select public.mark_messages_delivered('<room_id>', array[]::uuid[]); -- error 'room_closed'
+--   --   select public.touch_presence('<room_id>');                           -- error 'room_closed'

@@ -18,10 +18,12 @@ interface RoomSidebarProps {
   participants: RoomSidebarParticipant[];
   /** User ids currently online (realtime presence, owned by RoomShell). */
   onlineUserIds: ReadonlySet<string>;
-  /** Derived room state (waiting / active / temporarily_offline / expired). */
+  /** Derived room state (waiting / active / temporarily_offline / closed / expired). */
   presenceState: RoomPresenceState;
   /** True when the room is past its expiry. */
   expired: boolean;
+  /** True when a participant permanently left the chat. */
+  closed?: boolean;
   /** The current user's id, to mark "you" in the participant list. */
   userId: string;
 }
@@ -30,6 +32,7 @@ const PRESENCE_LABEL: Record<RoomPresenceState, string> = {
   waiting: "Waiting for the other person",
   active: "Both online",
   temporarily_offline: "Temporarily offline",
+  closed: "Chat ended",
   expired: "Expired",
 };
 
@@ -37,6 +40,7 @@ const PRESENCE_TONE: Record<RoomPresenceState, string> = {
   waiting: "text-warning",
   active: "text-success",
   temporarily_offline: "text-muted",
+  closed: "text-danger",
   expired: "text-danger",
 };
 
@@ -52,18 +56,20 @@ export function RoomSidebar({
   onlineUserIds,
   presenceState,
   expired,
+  closed = false,
   userId,
 }: RoomSidebarProps) {
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
+  const ended = expired || closed;
 
   useEffect(() => {
-    if (expired) {
+    if (ended) {
       return;
     }
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [expired]);
+  }, [ended]);
 
   const copyCode = useCallback(async () => {
     try {
@@ -86,13 +92,13 @@ export function RoomSidebar({
     <div className="border-t border-border p-4">
       <div className="rounded-xl border border-border bg-background p-3">
         <p className="text-[11px] font-medium uppercase tracking-wider text-muted">
-          {expired ? "Room code" : "Share this code"}
+          {ended ? "Room code" : "Share this code"}
         </p>
         <div className="mt-2 flex items-center gap-2">
           <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-surface px-2.5 py-2 text-center font-mono text-sm tracking-[0.15em] text-foreground">
             {room.code}
           </code>
-          {!expired && (
+          {!ended && (
             <Button
               type="button"
               variant="secondary"
@@ -115,7 +121,7 @@ export function RoomSidebar({
           )}
         </div>
 
-        {!expired && (
+        {!ended && (
           <div className="mt-3 flex items-center justify-between rounded-lg bg-surface px-3 py-2">
             <span className="flex items-center gap-1.5 text-xs text-muted">
               <Icon name="clock" className="h-3.5 w-3.5" />
@@ -135,7 +141,7 @@ export function RoomSidebar({
             </span>
           </p>
           <ul className="space-y-1.5">
-            {participants.length === 0 && expired ? (
+            {participants.length === 0 && ended ? (
               <li className="text-xs text-muted">No participants.</li>
             ) : (
               participants.map((participant) => {
@@ -170,6 +176,8 @@ export function RoomSidebar({
           <Icon name="lock" className="mt-0.5 h-3 w-3 shrink-0" />
           {expired ? (
             "This room has expired and is being destroyed."
+          ) : closed ? (
+            "This chat has ended. Its messages and keys are being destroyed."
           ) : (
             <>
               End-to-end encrypted. This room and its messages are deleted in{" "}

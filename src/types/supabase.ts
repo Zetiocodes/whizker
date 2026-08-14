@@ -19,13 +19,15 @@ export type Json =
   | Json[];
 
 /** Values of `rooms.status`. */
-export type RoomStatusDb = "waiting" | "active" | "expired";
+export type RoomStatusDb = "waiting" | "active" | "expired" | "closed";
 /** Values of `room_participants.role`. */
 export type ParticipantRoleDb = "owner" | "guest";
 /** Values of `messages.type`. */
 export type MessageTypeDb = "text" | "image";
 /** Values of `messages.status`. */
 export type MessageStatusDb = "sent" | "delivered" | "read";
+/** Values of `room_events.type`. */
+export type RoomEventTypeDb = "left";
 
 export interface Database {
   public: {
@@ -210,6 +212,48 @@ export interface Database {
           },
         ];
       };
+      /**
+       * Append-only lifecycle events (e.g. a participant leaving). Holds only
+       * metadata — a participant id and a display-name snapshot. Never message
+       * content, keys or plaintext. Rows are written exclusively by the
+       * leave_room RPC and published to the room's remaining participant over
+       * realtime; clients have no INSERT/UPDATE/DELETE access.
+       */
+      room_events: {
+        Row: {
+          id: string;
+          room_id: string;
+          user_id: string;
+          display_name: string;
+          type: RoomEventTypeDb;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          room_id: string;
+          user_id: string;
+          display_name: string;
+          type?: RoomEventTypeDb;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          room_id?: string;
+          user_id?: string;
+          display_name?: string;
+          type?: RoomEventTypeDb;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "room_events_room_id_fkey";
+            columns: ["room_id"];
+            isOneToOne: false;
+            referencedRelation: "rooms";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       /** Encrypted message ciphertext + non-secret decryption metadata. */
       messages: {
         Row: {
@@ -362,6 +406,18 @@ export interface Database {
         Returns: undefined;
       };
       /**
+       * SECURITY DEFINER. Permanently leaves a room: marks it 'closed',
+       * records a 'left' room event, deletes the room's key material and
+       * encrypted message content, and removes the caller's membership. The
+       * room and its encrypted storage blobs are fully purged afterwards.
+       * Raises 'not_authenticated' / 'room_not_found' / 'not_a_participant' /
+       * 'room_expired' / 'room_closed'.
+       */
+      leave_room: {
+        Args: { p_room: string };
+        Returns: undefined;
+      };
+      /**
        * SECURITY DEFINER. Hard-deletes all expired rooms and returns how many
        * were removed. Service-role only; callers must be the cron job.
        */
@@ -396,6 +452,7 @@ export interface Database {
       participant_role: ParticipantRoleDb;
       message_type: MessageTypeDb;
       message_status: MessageStatusDb;
+      room_event_type: RoomEventTypeDb;
     };
     CompositeTypes: { [_ in never]: never };
   };

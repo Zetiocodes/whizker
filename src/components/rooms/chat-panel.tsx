@@ -713,7 +713,13 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <ChatHeader peerName={peerName} avail={avail} encrypted={ready} expiresAt={expiresAt} />
+      <ChatHeader
+        peerName={peerName}
+        avail={avail}
+        encrypted={ready}
+        expiresAt={expiresAt}
+        roomId={roomId}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col">
         {banner ? (

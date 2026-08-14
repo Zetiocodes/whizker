@@ -6,24 +6,29 @@ import { formatRemainingShort } from "@/lib/ui/format";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { useSidebar } from "@/components/app-shell";
+import { LeaveChatButton } from "@/components/rooms/leave-chat-button";
 import type { AvailabilityView } from "@/lib/realtime/status";
 
 interface ChatHeaderProps {
+  /** The other participant's display name, or null while the room is not full. */
   peerName: string | null;
   avail: AvailabilityView;
   /** True when the room DEK is ready (E2EE established). */
   encrypted: boolean;
   /** Room expiry timestamp (ISO), shown as a shrinking countdown. */
   expiresAt: string;
+  /** Room id for the destructive "Leave chat" action. */
+  roomId: string;
 }
 
 /**
  * Room header: the other participant's display name only (never their
- * username/email), a live availability line, the room expiry countdown and the
- * end-to-end encryption indicator. On mobile it also hosts the sidebar toggle
- * so the drawer stays reachable from within the conversation.
+ * username/email), a live availability line, the room expiry countdown, the
+ * end-to-end encryption indicator and the destructive "Leave chat" action. On
+ * mobile it also hosts the sidebar toggle so the drawer stays reachable from
+ * within the conversation.
  */
-export function ChatHeader({ peerName, avail, encrypted, expiresAt }: ChatHeaderProps) {
+export function ChatHeader({ peerName, avail, encrypted, expiresAt, roomId }: ChatHeaderProps) {
   const { setOpen } = useSidebar();
   const [now, setNow] = useState(() => Date.now());
 
@@ -92,6 +97,8 @@ export function ChatHeader({ peerName, avail, encrypted, expiresAt }: ChatHeader
       >
         {encrypted ? "End-to-end encrypted" : "Setting up encryption"}
       </Badge>
+
+      <LeaveChatButton roomId={roomId} />
     </header>
   );
 }

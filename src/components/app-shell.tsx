@@ -160,7 +160,8 @@ function SidebarRoomItem({
   room: MyRoomSummary;
   active: boolean;
 }) {
-  const expired = room.status === "expired";
+  const ended = room.status === "expired" || room.status === "closed";
+  const endedLabel = room.status === "closed" ? "Ended" : "Expired";
 
   const inner = (
     <>
@@ -168,7 +169,7 @@ function SidebarRoomItem({
         aria-hidden="true"
         className={cn(
           "h-2 w-2 shrink-0 rounded-full",
-          expired ? "bg-muted" : active ? "bg-accent" : "bg-success",
+          ended ? "bg-muted" : active ? "bg-accent" : "bg-success",
         )}
       />
       <span className="min-w-0 flex-1">
@@ -176,8 +177,8 @@ function SidebarRoomItem({
           {room.code}
         </span>
         <span className="block truncate text-xs text-muted">
-          {expired
-            ? "Expired"
+          {ended
+            ? endedLabel
             : `${formatDayLabel(room.expiresAt)} · ${room.status === "waiting" ? "waiting" : "active"}`}
         </span>
       </span>
@@ -189,10 +190,10 @@ function SidebarRoomItem({
     active
       ? "bg-accent/15 text-foreground"
       : "text-muted hover:bg-surface-raised hover:text-foreground",
-    expired && "opacity-60",
+    ended && "opacity-60",
   );
 
-  if (expired) {
+  if (ended) {
     return <div className={className}>{inner}</div>;
   }
 

@@ -2,9 +2,12 @@
  * Room lifecycle status, persisted in the database.
  * - `waiting`: created by the owner, not yet joined by the second participant.
  * - `active`: both participants present.
+ * - `closed`: a participant permanently left the chat; content was destroyed
+ *   and the room cannot be reopened (the shell lingers until the 24h purge so
+ *   the remaining participant's dashboard can show it as ended).
  * - `expired`: past `expiresAt`; permanently inaccessible, all data deleted.
  */
-export type RoomStatus = "waiting" | "active" | "expired";
+export type RoomStatus = "waiting" | "active" | "expired" | "closed";
 
 /**
  * The room state surfaced in the UI. `temporarily_offline` is derived from
@@ -15,6 +18,7 @@ export type RoomPresenceState =
   | "waiting"
   | "active"
   | "temporarily_offline"
+  | "closed"
   | "expired";
 
 /**

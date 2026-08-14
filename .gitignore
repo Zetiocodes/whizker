@@ -42,3 +42,4 @@ next-env.d.ts
 # local IDE / config that must never be committed (contains credentials)
 .continue/
 supabase/.temp/
+supabase/**/.temp/

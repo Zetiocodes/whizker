@@ -5,12 +5,19 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { deleteRoomAttachmentBlobs } from "@/lib/storage/cleanup";
 import { generateRoomCode, normalizeRoomCode } from "@/lib/rooms/code";
 
 /** Shared state shape for the create/join room forms. */
 export type RoomActionState = {
   error?: string;
   fieldErrors?: Record<string, string[] | undefined>;
+};
+
+/** Result of leaving a chat; `ok` is true only after the room was destroyed. */
+export type LeaveRoomActionState = {
+  ok?: boolean;
+  error?: string;
 };
 
 /** Collision retries before giving up (room codes are 60-bit random). */
@@ -95,6 +102,9 @@ export async function joinRoomAction(
       await purgeExpiredRoomsBestEffort();
       return { error: "This room has expired. Ask for a fresh code." };
     }
+    if (message.includes("room_closed")) {
+      return { error: "This chat has already ended." };
+    }
     if (message.includes("room_full")) {
       return { error: "This room already has two participants." };
     }
@@ -121,4 +131,58 @@ export async function joinRoomAction(
 
   revalidatePath("/dashboard");
   redirect(`/c/${data.code}`);
+}
+
+/**
+ * Permanently leaves a chat. Runs leave_room (SECURITY DEFINER) with the
+ * caller's session: the room is atomically marked 'closed', a 'left' event is
+ * emitted, and the room's key material + encrypted content are destroyed. On
+ * success the encrypted storage blobs are removed with the service-role client
+ * (best-effort — the hourly sweep treats closed rooms as dead). Returns
+ * `{ ok: true }` only after the DB work committed.
+ */
+export async function leaveRoomAction(
+  roomId: string,
+): Promise<LeaveRoomActionState> {
+  const user = await getCurrentUser();
+  if (!user) {
+    return { error: "Please sign in to leave a chat." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("leave_room", { p_room: roomId });
+
+  if (error) {
+    const message = error.message.toLowerCase();
+    if (message.includes("room_closed")) {
+      return { error: "This chat has already ended." };
+    }
+    if (message.includes("room_expired")) {
+      await purgeExpiredRoomsBestEffort();
+      return { error: "This chat has expired." };
+    }
+    if (
+      message.includes("not_a_participant") ||
+      message.includes("room_not_found")
+    ) {
+      return { error: "This chat is no longer available." };
+    }
+    if (message.includes("not_authenticated")) {
+      return { error: "Please sign in to leave a chat." };
+    }
+    return { error: "Could not leave the chat. Please try again." };
+  }
+
+  revalidatePath("/dashboard");
+
+  // Best-effort removal of the encrypted blobs; the hourly cron is the
+  // authoritative backstop if this fails. Never blocks the user.
+  try {
+    const admin = createAdminClient();
+    await deleteRoomAttachmentBlobs(admin, roomId);
+  } catch {
+    // Ignore: cleanup must never block the user-facing flow.
+  }
+
+  return { ok: true };
 }

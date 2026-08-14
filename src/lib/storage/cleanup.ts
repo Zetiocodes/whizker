@@ -40,8 +40,52 @@ export function selectExpiredPaths(
 }
 
 /**
+ * Delete every object in a single room's storage folder. Used by the leave
+ * flow right after the leave_room RPC destroys the DB content. Returns how
+ * many objects were removed. Best-effort (no throw): the hourly sweep treats
+ * closed rooms as dead, so a failure here is still cleaned up by the cron.
+ * Service-role only.
+ */
+export async function deleteRoomAttachmentBlobs(
+  admin: SupabaseClient<Database>,
+  roomId: string,
+): Promise<number> {
+  const bucket = appConfig.supabase.storageBucket;
+  let removed = 0;
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await admin.storage.from(bucket).list(roomId, {
+      limit: LIST_PAGE_SIZE,
+      offset,
+      sortBy: { column: "name", order: "asc" },
+    });
+    if (error || !data) {
+      break;
+    }
+    // `list` returns bucket-relative object paths (the same convention
+    // purgeExpiredAttachmentBlobs relies on), so the folder prefix is already
+    // part of `file.name` — never re-prepend it.
+    const paths = data.map((file) => file.name);
+    if (paths.length > 0) {
+      const { error: removeError } = await admin.storage
+        .from(bucket)
+        .remove(paths);
+      if (!removeError) {
+        removed += paths.length;
+      }
+    }
+    if (data.length < LIST_PAGE_SIZE) {
+      break;
+    }
+    offset += LIST_PAGE_SIZE;
+  }
+  return removed;
+}
+
+/**
  * Delete every object in the encrypted-attachments bucket whose room folder is
- * expired (or no longer exists). Returns how many objects were removed.
+ * expired, closed (a participant permanently left it) or no longer exists.
+ * Returns how many objects were removed.
  */
 export async function purgeExpiredAttachmentBlobs(
   admin: SupabaseClient<Database>,
@@ -91,13 +135,16 @@ export async function purgeExpiredAttachmentBlobs(
   const roomIds = [...pathsByRoom.keys()];
   const { data: rooms, error: roomsError } = await admin
     .from("rooms")
-    .select("id, expires_at")
+    .select("id, expires_at, status")
     .in("id", roomIds);
   if (roomsError) {
     throw new Error(`cleanup: failed to read rooms: ${roomsError.message}`);
   }
   const alive = new Set<string>();
   for (const room of rooms ?? []) {
+    if (room.status === "closed") {
+      continue;
+    }
     if (new Date(room.expires_at).getTime() > Date.now()) {
       alive.add(room.id);
     }

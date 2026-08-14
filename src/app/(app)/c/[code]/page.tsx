@@ -32,7 +32,8 @@ export default async function RoomPage({
   const supabase = await createClient();
 
   // RLS guarantees this returns a room only when the caller is a participant
-  // AND the room has not expired.
+  // AND the room has not expired. A closed room's remaining participant still
+  // sees it (their membership + the room row survive until the purge).
   const { data: room } = await supabase
     .from("rooms")
     .select("id, code, owner_id, created_at, expires_at, status")
@@ -67,6 +68,7 @@ export default async function RoomPage({
           displayName: p.display_name,
         }))}
         rooms={rooms}
+        closed={room.status === "closed"}
       />
     );
   }
@@ -78,7 +80,7 @@ export default async function RoomPage({
   const admin = createAdminClient();
   const { data: dbRoom } = await admin
     .from("rooms")
-    .select("id, expires_at")
+    .select("id, expires_at, status")
     .eq("code", code)
     .maybeSingle();
 
@@ -88,16 +90,23 @@ export default async function RoomPage({
 
   const isExpired = hasExpired(dbRoom.expires_at);
 
-  if (!isExpired) {
+  if (!isExpired && dbRoom.status !== "closed") {
     return <InlineJoin code={code} />;
   }
 
-  // Best-effort cleanup of the dead room; the hourly cron is authoritative.
-  try {
-    await admin.rpc("purge_expired_rooms");
-  } catch {
-    // Ignore: cleanup must never block the user-facing flow.
+  if (isExpired) {
+    // Best-effort cleanup of the dead room; the hourly cron is authoritative.
+    try {
+      await admin.rpc("purge_expired_rooms");
+    } catch {
+      // Ignore: cleanup must never block the user-facing flow.
+    }
   }
+
+  // A closed room shows its ended screen to anyone who opens its code — the
+  // leaver's membership is gone and its content is destroyed, so there is
+  // nothing to reveal and nothing to join.
+  const closed = dbRoom.status === "closed";
 
   return (
     <RoomShell
@@ -110,11 +119,12 @@ export default async function RoomPage({
         id: dbRoom.id,
         code,
         expiresAt: dbRoom.expires_at,
-        status: "expired",
+        status: isExpired ? "expired" : "closed",
       }}
       participants={[]}
-      rooms={[]}
-      expired
+      rooms={closed ? await getMyRoomSummaries(supabase, user.id) : []}
+      expired={isExpired}
+      closed={closed}
     />
   );
 }
