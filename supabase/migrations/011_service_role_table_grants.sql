@@ -1,0 +1,43 @@
+-- 011_service_role_table_grants.sql
+--
+-- Restores the missing table-level SELECT GRANTs for the `service_role`
+-- role on the hosted project.
+--
+-- WHY THIS MIGRATION EXISTS:
+--   Supabase's default privileges (GRANT ALL on tables in schema public to
+--   anon/authenticated/service_role) were not applied to every table on this
+--   project — the same defect migration 010 documented for `authenticated`.
+--   As a result `service_role` holds no table-level grants at all, so the
+--   server-side admin client (secret key) receives:
+--     42501  permission denied for table rooms
+--   The `purge_expired_rooms()` RPC itself works (SECURITY DEFINER, EXECUTE
+--   granted to service_role in migration 005); what breaks is the direct
+--   PostgREST table reads the purge and signup paths perform.
+--
+-- SCOPE / SAFETY:
+--   - Two minimal SELECT grants only. No INSERT/UPDATE/DELETE/TRUNCATE, no
+--     anon grants, no changes to RLS policies, the purge RPC or the storage
+--     policies.
+--   - `service_role` already bypasses RLS (BYPASSRLS) and already holds the
+--     project's master capabilities (GoTrue admin, purge RPC, storage
+--     remove). These grants restore server-side capabilities only; they
+--     change nothing a client can do.
+--   - GRANT is idempotent, so this is safe on a project whose default
+--     privileges already cover service_role.
+
+-- ---------------------------------------------------------------------------
+-- 1. rooms: SELECT
+-- ---------------------------------------------------------------------------
+-- Backs the purge route (src/app/api/cron/purge-rooms/route.ts) via
+-- purgeExpiredAttachmentBlobs() (src/lib/storage/cleanup.ts), which queries
+-- rooms.expires_at as the service role to decide which encrypted attachment
+-- blobs are safe to delete BEFORE purge_expired_rooms() removes the rows.
+grant select on public.rooms to service_role;
+
+-- ---------------------------------------------------------------------------
+-- 2. profiles: SELECT
+-- ---------------------------------------------------------------------------
+-- Backs the duplicate-username pre-check in signupAction
+-- (src/actions/auth.ts), which queries public.profiles with the service-role
+-- client before calling admin.createUser.
+grant select on public.profiles to service_role;

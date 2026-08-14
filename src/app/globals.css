@@ -1,0 +1,201 @@
+@import "tailwindcss";
+
+/*
+ * Dark-first theme tokens.
+ * Inspired by chat-app ergonomics (Discord-style layout) without copying any
+ * proprietary branding or assets.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-bubble-own: var(--bubble-own);
+  --color-bubble-peer: var(--bubble-peer);
+}
+
+:root {
+  --background: #101217;
+  --foreground: #e8eaed;
+  --muted: #8a919e;
+  --surface: #161923;
+  --surface-raised: #1e2330;
+  --surface-overlay: #232a3a;
+  --border: #262d3d;
+  --border-strong: #333c50;
+  --accent: #7c6cf6;
+  --accent-hover: #6c5bf0;
+  --success: #3ddc84;
+  --warning: #f5b544;
+  --danger: #f2626b;
+  --bubble-own: #333c50;
+  --bubble-peer: #1e2330;
+
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-overlay: 0 20px 50px rgba(0, 0, 0, 0.5);
+  --shadow-popover: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgba(124, 108, 246, 0.35);
+}
+
+/* Slim, theme-aware scrollbars (webkit + firefox). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #414a61;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Standard focus ring for custom interactive surfaces. */
+.focus-ring {
+  outline: none;
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+ * Subtle entrance + attention animations. Every animation is paired with a
+ * `prefers-reduced-motion` fallback so motion is never forced on users who
+ * disabled it at the OS level.
+ */
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes typing-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.animate-message-in {
+  animation: message-in 160ms ease-out both;
+}
+
+.animate-fade-in {
+  animation: fade-in 160ms ease-out both;
+}
+
+.animate-scale-in {
+  animation: scale-in 140ms ease-out both;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2.2s ease-in-out infinite;
+}
+
+.typing-dot {
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-message-in,
+  .animate-fade-in,
+  .animate-scale-in,
+  .animate-pulse-soft,
+  .typing-dot {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
